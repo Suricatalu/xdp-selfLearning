@@ -1,3 +1,5 @@
+(Not xdp-project official document, it is clone from them to slef learning)
+
 # -*- fill-column: 76; -*-
 #+TITLE: XDP Programming Hands-On Tutorial
 #+OPTIONS: ^:nil
