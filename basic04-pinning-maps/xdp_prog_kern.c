@@ -46,11 +46,21 @@ __u32 xdp_stats_record_action(struct xdp_md *ctx, __u32 action)
 	rec->rx_packets++;
 	rec->rx_bytes += bytes;
 
+	bpf_printk("The %dth packets\n", rec->rx_packets);
+
 	return action;
 }
 
 SEC("xdp")
 int  xdp_pass_func(struct xdp_md *ctx)
+{
+	__u32 action = XDP_PASS; /* XDP_PASS = 2 */
+
+	return xdp_stats_record_action(ctx, action);
+}
+
+SEC("xdp")
+int  xdp_pass_func2(struct xdp_md *ctx)
 {
 	__u32 action = XDP_PASS; /* XDP_PASS = 2 */
 

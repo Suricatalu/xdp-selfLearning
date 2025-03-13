@@ -26,6 +26,7 @@ static const char *__doc__ = "XDP loader and stats program\n"
 static const char *default_filename = "xdp_prog_kern.o";
 static const char *default_progname = "xdp_stats1_func";
 
+
 static const struct option_wrapper long_options[] = {
 	{{"help",        no_argument,		NULL, 'h' },
 	 "Show help", false},
@@ -97,7 +98,7 @@ struct record {
 };
 
 struct stats_record {
-	struct record stats[1]; /* Assignment#2: Hint */
+	struct record stats[XDP_REDIRECT + 1]; /* Assignment#2: Hint */
 };
 
 static double calc_period(struct record *r, struct record *p)
@@ -155,8 +156,28 @@ void map_get_value_percpu_array(int fd, __u32 key, struct datarec *value)
 	/* For percpu maps, userspace gets a value per possible CPU */
 	// unsigned int nr_cpus = libbpf_num_possible_cpus();
 	// struct datarec values[nr_cpus];
+	/* For percpu maps, user space gets a value per possible CPU */
+	unsigned int nr_cpus = libbpf_num_possible_cpus();
+	struct datarec values[nr_cpus];
+	__u64 sum_bytes = 0;
+	__u64 sum_pkts = 0;
+	int i;
 
-	fprintf(stderr, "ERR: %s() not impl. see assignment#3", __func__);
+	if ((bpf_map_lookup_elem(fd, &key, values)) != 0) {
+		fprintf(stderr,
+			"ERR: bpf_map_lookup_elem failed key:0x%X\n", key);
+		return;
+	}
+
+	/* Sum values from each CPU */
+	for (i = 0; i < nr_cpus; i++) {
+		sum_pkts  += values[i].rx_packets;
+		sum_bytes += values[i].rx_bytes;
+		if (key == 2)
+		printf("The %lluth packet in %d cpu is %llu bytes\n", values[i].rx_packets, i, values[i].rx_bytes);
+	}
+	value->rx_packets = sum_pkts;
+	value->rx_bytes   = sum_bytes;
 }
 
 static bool map_collect(int fd, __u32 map_type, __u32 key, struct record *rec)
@@ -172,6 +193,8 @@ static bool map_collect(int fd, __u32 map_type, __u32 key, struct record *rec)
 		break;
 	case BPF_MAP_TYPE_PERCPU_ARRAY:
 		/* fall-through */
+		map_get_value_percpu_array(fd, key, &value);
+		break;
 	default:
 		fprintf(stderr, "ERR: Unknown map_type(%u) cannot handle\n",
 			map_type);
@@ -181,6 +204,7 @@ static bool map_collect(int fd, __u32 map_type, __u32 key, struct record *rec)
 
 	/* Assignment#1: Add byte counters */
 	rec->total.rx_packets = value.rx_packets;
+	rec->total.rx_bytes = value.rx_bytes;
 	return true;
 }
 
@@ -190,7 +214,17 @@ static void stats_collect(int map_fd, __u32 map_type,
 	/* Assignment#2: Collect other XDP actions stats  */
 	__u32 key = XDP_PASS;
 
-	map_collect(map_fd, map_type, key, &stats_rec->stats[0]);
+	printf("==========%s() is implemented, whose line is %d==========\n", __func__, __LINE__);
+	for (int i = 0; i <= XDP_REDIRECT; i++)
+	{
+		key = (__u32) i;
+		map_collect(map_fd, map_type, key, &stats_rec->stats[i]);
+		if (i == 2)
+		printf("The %lluth packet(%s) is %llu bytes\n", 
+				stats_rec->stats[i].total.rx_packets, 
+				action2str(key), 
+				stats_rec->stats[i].total.rx_bytes);
+	}
 }
 
 static void stats_poll(int map_fd, __u32 map_type, int interval)

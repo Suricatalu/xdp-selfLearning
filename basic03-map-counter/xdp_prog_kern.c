@@ -9,7 +9,7 @@
  * - The idea is to keep stats per (enum) xdp_action
  */
 struct {
-	__uint(type, BPF_MAP_TYPE_ARRAY);
+	__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
 	__type(key, __u32);
 	__type(value, struct datarec);
 	__uint(max_entries, XDP_ACTION_MAX);
@@ -22,11 +22,15 @@ struct {
 #define lock_xadd(ptr, val)	((void) __sync_fetch_and_add(ptr, val))
 #endif
 
+#ifndef lock_xset
+#define lock_xset(ptr, val)	((void) __sync_lock_test_and_set(ptr, val))
+#endif
+
 SEC("xdp")
 int  xdp_stats1_func(struct xdp_md *ctx)
 {
-	// void *data_end = (void *)(long)ctx->data_end;
-	// void *data     = (void *)(long)ctx->data;
+	void *data_end = (void *)(long)ctx->data_end;
+	void *data     = (void *)(long)ctx->data;
 	struct datarec *rec;
 	__u32 key = XDP_PASS; /* XDP_PASS = 2 */
 
@@ -43,12 +47,17 @@ int  xdp_stats1_func(struct xdp_md *ctx)
 	 * use an atomic operation.
 	 */
 	lock_xadd(&rec->rx_packets, 1);
-        /* Assignment#1: Add byte counters
-         * - Hint look at struct xdp_md *ctx (copied below)
-         *
-         * Assignment#3: Avoid the atomic operation
-         * - Hint there is a map type named BPF_MAP_TYPE_PERCPU_ARRAY
-         */
+	/* Assignment#1: Add byte counters
+	* - Hint look at struct xdp_md *ctx (copied below)
+	*
+	* Assignment#3: Avoid the atomic operation
+	* - Hint there is a map type named BPF_MAP_TYPE_PERCPU_ARRAY
+	*/
+	__u64 bytes = (char *)data_end - (char *)data;
+	lock_xset(&rec->rx_bytes, bytes);
+
+
+	bpf_printk("The %dth packet is %d bytes\n", rec->rx_packets, rec->rx_bytes);
 
 	return XDP_PASS;
 }

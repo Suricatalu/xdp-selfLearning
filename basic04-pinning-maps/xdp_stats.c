@@ -191,9 +191,11 @@ static void stats_collect(int map_fd, __u32 map_type,
 	}
 }
 
-static void stats_poll(int map_fd, __u32 map_type, int interval)
+static void stats_poll(int map_fd, __u32 map_type, int interval, struct bpf_map_info map_info, char *pin_dir)
 {
 	struct stats_record prev, record = { 0 };
+	struct bpf_map_info info = { 0 };
+	int check_map_fd;
 
 	/* Trick to pretty printf with thousands separators use %' */
 	setlocale(LC_NUMERIC, "en_US");
@@ -204,6 +206,14 @@ static void stats_poll(int map_fd, __u32 map_type, int interval)
 
 	while (1) {
 		prev = record; /* struct copy */
+		printf("The map id is %d\n", map_info.id);
+		check_map_fd = open_bpf_map_file(pin_dir, "xdp_stats_map", &info);
+		if (check_map_fd < 0) {
+			break;
+		} else if (info.id != map_info.id) {
+			fprintf(stderr, "ERR: bpf_map file changed\n");
+			break;
+		}
 		stats_collect(map_fd, map_type, &record);
 		stats_print(&record, &prev);
 		sleep(interval);
@@ -246,11 +256,14 @@ int main(int argc, char **argv)
 		fprintf(stderr, "ERR: creating pin dirname\n");
 		return EXIT_FAIL_OPTION;
 	}
+	goto open;
 
+open:
 	stats_map_fd = open_bpf_map_file(pin_dir, "xdp_stats_map", &info);
 	if (stats_map_fd < 0) {
 		return EXIT_FAIL_BPF;
 	}
+	printf("Stats map fd:%d\n", stats_map_fd);
 
 	/* check map info, e.g. datarec is expected size */
 	map_expect.key_size    = sizeof(__u32);
@@ -270,6 +283,8 @@ int main(int argc, char **argv)
 		       );
 	}
 
-	stats_poll(stats_map_fd, info.type, interval);
+	stats_poll(stats_map_fd, info.type, interval, info, pin_dir);
+	goto open;
+
 	return EXIT_OK;
 }

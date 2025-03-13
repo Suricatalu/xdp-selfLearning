@@ -116,21 +116,21 @@ int main(int argc, char **argv)
 		return EXIT_OK;
 	}
 
-        /* Open a BPF object file */
-        DECLARE_LIBBPF_OPTS(bpf_object_open_opts, bpf_opts);
-        obj = bpf_object__open_file(cfg.filename, &bpf_opts);
-        err = libbpf_get_error(obj);
-        if (err) {
-                libxdp_strerror(err, errmsg, sizeof(errmsg));
-                fprintf(stderr, "Couldn't open BPF object file %s: %s\n",
-                        cfg.filename, errmsg);
-                return err;
-        }
+	/* Open a BPF object file */
+	DECLARE_LIBBPF_OPTS(bpf_object_open_opts, bpf_opts);
+	obj = bpf_object__open_file(cfg.filename, &bpf_opts);
+	err = libbpf_get_error(obj);
+	if (err) {
+		libxdp_strerror(err, errmsg, sizeof(errmsg));
+		fprintf(stderr, "Couldn't open BPF object file %s: %s\n",
+				cfg.filename, errmsg);
+		return err;
+	}
 
-        /* List available programs */
+	/* List available programs */
 	if (verbose)
 		list_avail_progs(obj);
-
+	
 	DECLARE_LIBXDP_OPTS(xdp_program_opts, xdp_opts,
                             .obj = obj,
                             .prog_name = cfg.progname);

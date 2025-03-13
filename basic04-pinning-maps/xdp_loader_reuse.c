@@ -74,6 +74,8 @@ int pin_maps_in_bpf_object(struct bpf_object *bpf_obj, const char *subdir)
 	char map_filename[PATH_MAX];
 	char pin_dir[PATH_MAX];
 	int err, len;
+	struct bpf_map *reusedmap;
+	int reusedfd = -1;
 
 	len = snprintf(pin_dir, PATH_MAX, "%s/%s", pin_basedir, subdir);
 	if (len < 0) {
@@ -89,25 +91,27 @@ int pin_maps_in_bpf_object(struct bpf_object *bpf_obj, const char *subdir)
 	}
 
 	/* Existing/previous XDP prog might not have cleaned up */
-	if (access(map_filename, F_OK ) != -1 ) {
+	if (access(map_filename, F_OK ) == -1 ) {
 		if (verbose)
-			printf(" - Unpinning (remove) prev maps in %s/\n",
-			       pin_dir);
+			printf(" - Pinning maps in %s/\n", pin_dir);
 
-		/* Basically calls unlink(3) on map_filename */
-		err = bpf_object__unpin_maps(bpf_obj, pin_dir);
-		if (err) {
-			fprintf(stderr, "ERR: UNpinning maps in %s\n", pin_dir);
+		/* This will pin all maps in our bpf_object */
+		err = bpf_object__pin_maps(bpf_obj, pin_dir);
+		if (err)
 			return EXIT_FAIL_BPF;
-		}
 	}
-	if (verbose)
-		printf(" - Pinning maps in %s/\n", pin_dir);
-
-	/* This will pin all maps in our bpf_object */
-	err = bpf_object__pin_maps(bpf_obj, pin_dir);
-	if (err)
-		return EXIT_FAIL_BPF;
+	else
+	{	
+		if (verbose)
+			printf(" - Reusing maps in %s/\n", pin_dir);
+		
+		/* This will reuse maps before created */
+		reusedmap = bpf_object__find_map_by_name(bpf_obj, map_name);
+		reusedfd = bpf_map__fd(reusedmap);
+		err = bpf_map__reuse_fd(reusedmap, reusedfd);
+		if (err)
+			return EXIT_FAIL_BPF;
+	}
 
 	return 0;
 }

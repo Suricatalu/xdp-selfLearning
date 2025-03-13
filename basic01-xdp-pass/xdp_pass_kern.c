@@ -5,6 +5,7 @@
 SEC("xdp")
 int  xdp_prog_simple(struct xdp_md *ctx)
 {
+	bpf_printk("xdp_prog_simple executed, ctx: %p\n", ctx);
 	return XDP_PASS;
 }
 
