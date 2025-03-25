@@ -152,6 +152,7 @@ int xdp_icmp_echo_func(struct xdp_md *ctx)
 	
 	// bpf_printk("xdp_icmp_echo_func 4 (cksum=%d)\n", icmphdr->cksum);
 	action = XDP_TX;
+	xdp_stats_record_action(ctx, action);
 
 out:
 	return xdp_stats_record_action(ctx, action);
@@ -165,21 +166,41 @@ int xdp_redirect_func(struct xdp_md *ctx)
 	void *data = (void *)(long)ctx->data;
 	struct hdr_cursor nh;
 	struct ethhdr *eth;
+	struct iphdr *iphdr;
+	struct ipv6hdr *ipv6hdr;
 	int eth_type;
+	int ip_type;
 	int action = XDP_PASS;
-	/* unsigned char dst[ETH_ALEN] = {} */	/* Assignment 2: fill in with the MAC address of the left inner interface */
-	/* unsigned ifindex = 0; */		/* Assignment 2: fill in with the ifindex of the left interface */
+	unsigned char dst[ETH_ALEN] = {0xe2, 0x96, 0xcd, 0x49, 0x50, 0x30};	/* Assignment 2: fill in with the MAC address of the left inner interface */
+	unsigned char src[ETH_ALEN] = {0x06, 0x0c, 0x14, 0x5e, 0xe0, 0x6d};	/* Assignment 2: fill in with the MAC address of the right interface */
+	unsigned ifindex = 34;		/* Assignment 2: fill in with the ifindex of the left interface */
 
 	/* These keep track of the next header type and iterator pointer */
 	nh.pos = data;
 
 	/* Parse Ethernet and IP/IPv6 headers */
 	eth_type = parse_ethhdr(&nh, data_end, &eth);
-	if (eth_type == -1)
+	if (eth_type == bpf_htons(ETH_P_IP)) {
+		ip_type = parse_iphdr(&nh, data_end, &iphdr);
+		if (ip_type != IPPROTO_ICMP)
+			goto out;
+	} else if (eth_type == bpf_htons(ETH_P_IPV6)) {
+		ip_type = parse_ip6hdr(&nh, data_end, &ipv6hdr);
+		if (ip_type != IPPROTO_ICMPV6)
+			goto out;
+	} else {
 		goto out;
-
+	}
+	
 	/* Assignment 2: set a proper destination address and call the
 	 * bpf_redirect() with proper parameters, action = bpf_redirect(...) */
+	for (int i = 0; i < ETH_ALEN; i++)
+	{
+		eth->h_dest[i] = dst[i];
+		eth->h_source[i] = src[i];
+	}
+	
+	action = bpf_redirect(ifindex, 0);
 
 out:
 	return xdp_stats_record_action(ctx, action);
@@ -197,6 +218,7 @@ int xdp_redirect_map_func(struct xdp_md *ctx)
 	int action = XDP_PASS;
 	unsigned char *dst;
 
+	bpf_printk("called xdp_redirect_map_func");
 	/* These keep track of the next header type and iterator pointer */
 	nh.pos = data;
 
@@ -208,11 +230,18 @@ int xdp_redirect_map_func(struct xdp_md *ctx)
 	/* Do we know where to redirect this packet? */
 	dst = bpf_map_lookup_elem(&redirect_params, eth->h_source);
 	if (!dst)
+	{
+		bpf_printk("xdp_redirect_map_func: no destination found");
 		goto out;
+	}
 
 	/* Set a proper destination address */
 	memcpy(eth->h_dest, dst, ETH_ALEN);
 	action = bpf_redirect_map(&tx_port, 0, 0);
+
+	// bpf_printk the action result
+	// On Shell: sudo cat /sys/kernel/debug/tracing/trace_pipe
+	bpf_printk("xdp_redirect_map_func: action=%d\n", action);
 
 out:
 	return xdp_stats_record_action(ctx, action);

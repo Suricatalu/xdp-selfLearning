@@ -54,6 +54,21 @@ static int parse_mac(char *str, unsigned char mac[ETH_ALEN])
 {
 	/* Assignment 3: parse a MAC address in this function and place the
 	 * result in the mac array */
+	int values[ETH_ALEN];
+	if (sscanf(str, "%x:%x:%x:%x:%x:%x",
+			   &values[0], &values[1], &values[2],
+			   &values[3], &values[4], &values[5]) != ETH_ALEN) {
+		fprintf(stderr, "ERR: Invalid MAC address format: %s\n", str);
+		return -1;
+	}
+
+	for (int i = 0; i < ETH_ALEN; i++) {
+		if (values[i] < 0 || values[i] > 0xFF) {
+			fprintf(stderr, "ERR: Invalid MAC address value: %s\n", str);
+			return -1;
+		}
+		mac[i] = (unsigned char)values[i];
+	}
 
 	return 0;
 }
@@ -88,6 +103,8 @@ int main(int argc, char **argv)
 	int map_fd;
 	bool redirect_map;
 	char pin_dir[PATH_MAX];
+	char tx_port_path[PATH_MAX];
+	char redirect_params_path[PATH_MAX];
 	unsigned char src[ETH_ALEN];
 	unsigned char dest[ETH_ALEN];
 
@@ -127,7 +144,17 @@ int main(int argc, char **argv)
 	/* Assignment 3: open the tx_port map corresponding to the cfg.ifname interface */
 	map_fd = -1;
 
+	snprintf(tx_port_path, PATH_MAX, "%s/%s/tx_port", pin_basedir, cfg.ifname);
+	map_fd = bpf_obj_get(tx_port_path);
+	if (map_fd < 0) {
+		fprintf(stderr, "ERR: Failed to open tx_port map: %s\n", strerror(errno));
+		return EXIT_FAIL_BPF;
+	}
+
+	printf("Opened tx_port map: %s (map_fd: %d)\n", tx_port_path, map_fd);
+
 	printf("map dir: %s\n", pin_dir);
+	
 
 	if (redirect_map) {
 		/* setup a virtual port for the static redirect */
@@ -137,6 +164,15 @@ int main(int argc, char **argv)
 
 		/* Assignment 3: open the redirect_params map corresponding to the cfg.ifname interface */
 		map_fd = -1;
+
+		snprintf(redirect_params_path, PATH_MAX, "%s/%s/redirect_params", pin_basedir, cfg.ifname);
+		map_fd = bpf_obj_get(redirect_params_path);
+		if (map_fd < 0) {
+			fprintf(stderr, "ERR: Failed to open redirect_params map: %s\n", strerror(errno));
+			return EXIT_FAIL_BPF;
+		}
+
+		printf("Opened redirect_params map: %s (map_fd: %d)\n", redirect_params_path, map_fd);
 
 		/* Setup the mapping containing MAC addresses */
 		if (write_iface_params(map_fd, src, dest) < 0) {
