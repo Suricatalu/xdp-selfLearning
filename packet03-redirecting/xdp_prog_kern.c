@@ -288,6 +288,10 @@ int xdp_router_func(struct xdp_md *ctx)
 			goto out;
 
 		/* Assignment 4: fill the fib_params structure for the AF_INET case */
+		fib_params.family = AF_INET;
+		fib_params.tos = iph->tos;
+		fib_params.ipv4_src = iph->saddr;
+		fib_params.ipv4_dst = iph->daddr;
 	} else if (h_proto == bpf_htons(ETH_P_IPV6)) {
 		/* These pointers can be used to assign structures instead of executing memcpy: */
 		/* struct in6_addr *src = (struct in6_addr *) fib_params.ipv6_src; */
@@ -303,15 +307,22 @@ int xdp_router_func(struct xdp_md *ctx)
 			goto out;
 
 		/* Assignment 4: fill the fib_params structure for the AF_INET6 case */
+		fib_params.family = AF_INET6;
+		memcpy(&fib_params.ipv6_src, &ip6h->saddr, sizeof(fib_params.ipv6_src));
+		memcpy(&fib_params.ipv6_dst, &ip6h->daddr, sizeof(fib_params.ipv6_dst));
 	} else {
 		goto out;
 	}
 
 	fib_params.ifindex = ctx->ingress_ifindex;
 
+	bpf_printk("bpf_fib_lookup: family=%d, tos=%d, ifindex=%d\n",
+		   fib_params.family, fib_params.tos, fib_params.ifindex);
+
 	rc = bpf_fib_lookup(ctx, &fib_params, sizeof(fib_params), 0);
 	switch (rc) {
 	case BPF_FIB_LKUP_RET_SUCCESS:         /* lookup successful */
+		bpf_printk("bpf_fib_lookup: BPF_FIB_LKUP_RET_SUCCESS\n");
 		if (h_proto == bpf_htons(ETH_P_IP))
 			ip_decrease_ttl(iph);
 		else if (h_proto == bpf_htons(ETH_P_IPV6))
@@ -320,20 +331,34 @@ int xdp_router_func(struct xdp_md *ctx)
 		/* Assignment 4: fill in the eth destination and source
 		 * addresses and call the bpf_redirect function */
 		/* memcpy(eth->h_dest, ???, ETH_ALEN); */
+		memcpy(eth->h_dest, fib_params.dmac, ETH_ALEN);
 		/* memcpy(eth->h_source, ???, ETH_ALEN); */
+		memcpy(eth->h_source, fib_params.smac, ETH_ALEN);
 		/* action = bpf_redirect(???, 0); */
+		action = bpf_redirect(fib_params.ifindex, 0);
 		break;
+		
 	case BPF_FIB_LKUP_RET_BLACKHOLE:    /* dest is blackholed; can be dropped */
 	case BPF_FIB_LKUP_RET_UNREACHABLE:  /* dest is unreachable; can be dropped */
 	case BPF_FIB_LKUP_RET_PROHIBIT:     /* dest not allowed; can be dropped */
+		bpf_printk("bpf_fib_lookup: dest is blackholed, unreachable, or prohibited\n");
 		action = XDP_DROP;
 		break;
+
 	case BPF_FIB_LKUP_RET_NOT_FWDED:    /* packet is not forwarded */
+		bpf_printk("bpf_fib_lookup: packet is not forwarded\n");
+		break;
 	case BPF_FIB_LKUP_RET_FWD_DISABLED: /* fwding is not enabled on ingress */
+		bpf_printk("bpf_fib_lookup: forwarding is not enabled on ingress\n");
+		break;
 	case BPF_FIB_LKUP_RET_UNSUPP_LWT:   /* fwd requires encapsulation */
+		bpf_printk("bpf_fib_lookup: forwarding requires encapsulation\n");
+		break;
 	case BPF_FIB_LKUP_RET_NO_NEIGH:     /* no neighbor entry for nh */
+		bpf_printk("bpf_fib_lookup: no neighbor entry for next hop\n");
+		break;
 	case BPF_FIB_LKUP_RET_FRAG_NEEDED:  /* fragmentation required to fwd */
-		/* PASS */
+		bpf_printk("bpf_fib_lookup: fragmentation required to forward\n");
 		break;
 	}
 
