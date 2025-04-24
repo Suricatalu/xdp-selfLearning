@@ -42,12 +42,28 @@ struct config cfg = {
 	.ifindex   = -1,
 };
 
+/**
+ * struct xsk_umem_info - Represents the UMEM (user memory) configuration and associated rings.
+ * @fq: Fill queue ring buffer for UMEM, used to supply buffers to the kernel.
+ * @cq: Completion queue ring buffer for UMEM, used to retrieve completed buffers from the kernel.
+ * @umem: Pointer to the UMEM object, which manages the memory region for packet data.
+ * @buffer: Pointer to the memory buffer allocated for UMEM.
+ */
 struct xsk_umem_info {
 	struct xsk_ring_prod fq;
 	struct xsk_ring_cons cq;
 	struct xsk_umem *umem;
 	void *buffer;
 };
+
+/**
+ * struct stats_record - Tracks statistics for packet and byte counts.
+ * @timestamp: Timestamp of the last statistics update.
+ * @rx_packets: Total number of packets received.
+ * @rx_bytes: Total number of bytes received.
+ * @tx_packets: Total number of packets transmitted.
+ * @tx_bytes: Total number of bytes transmitted.
+ */
 struct stats_record {
 	uint64_t timestamp;
 	uint64_t rx_packets;
@@ -55,6 +71,19 @@ struct stats_record {
 	uint64_t tx_packets;
 	uint64_t tx_bytes;
 };
+
+/**
+ * struct xsk_socket_info - Represents an AF_XDP socket and its associated resources.
+ * @rx: Receive ring buffer for packets received from the kernel.
+ * @tx: Transmit ring buffer for packets to be sent to the kernel.
+ * @umem: Pointer to the associated UMEM information structure.
+ * @xsk: Pointer to the AF_XDP socket object.
+ * @umem_frame_addr: Array of addresses for UMEM frames, used to track memory buffers.
+ * @umem_frame_free: Counter for the number of free UMEM frames available.
+ * @outstanding_tx: Counter for the number of outstanding packets in the transmit queue.
+ * @stats: Current statistics for the socket, including packet and byte counts.
+ * @prev_stats: Previous statistics snapshot, used for calculating deltas.
+ */
 struct xsk_socket_info {
 	struct xsk_ring_cons rx;
 	struct xsk_ring_prod tx;
@@ -290,7 +319,7 @@ static bool process_packet(struct xsk_socket_info *xsk,
 	 *   ICMPV6_ECHO_REPLY
 	 * - Recalculate the icmp checksum */
 
-	if (false) {
+	if (true) {
 		int ret;
 		uint32_t tx_idx = 0;
 		uint8_t tmp_mac[ETH_ALEN];
@@ -363,12 +392,10 @@ static void handle_receive_packets(struct xsk_socket_info *xsk)
 
 		/* This should not happen, but just in case */
 		while (ret != stock_frames)
-			ret = xsk_ring_prod__reserve(&xsk->umem->fq, rcvd,
-						     &idx_fq);
+			ret = xsk_ring_prod__reserve(&xsk->umem->fq, rcvd, &idx_fq);
 
 		for (i = 0; i < stock_frames; i++)
-			*xsk_ring_prod__fill_addr(&xsk->umem->fq, idx_fq++) =
-				xsk_alloc_umem_frame(xsk);
+			*xsk_ring_prod__fill_addr(&xsk->umem->fq, idx_fq++) = xsk_alloc_umem_frame(xsk);
 
 		xsk_ring_prod__submit(&xsk->umem->fq, stock_frames);
 	}

@@ -15,19 +15,19 @@ static __always_inline int __parse_ethhdr(struct hdr_cursor *nh,
 	void *data_end,
 	struct ethhdr **ethhdr)
 {
-struct ethhdr *eth = nh->pos;
-int hdrsize = sizeof(*eth);
+	struct ethhdr *eth = nh->pos;
+	int hdrsize = sizeof(*eth);
 
-/* Byte-count bounds check; check if current pointer + size of header
-* is after data_end.
-*/
-if (nh->pos + hdrsize > data_end)
-return -1;
+	/* Byte-count bounds check; check if current pointer + size of header
+	* is after data_end.
+	*/
+	if (nh->pos + hdrsize > data_end)
+	return -1;
 
-nh->pos += hdrsize;
-*ethhdr = eth;
+	nh->pos += hdrsize;
+	*ethhdr = eth;
 
-return eth->h_proto; /* network-byte-order */
+	return eth->h_proto; /* network-byte-order */
 }
 
 /* Pops the outermost VLAN tag off the packet. Returns the popped VLAN ID on
