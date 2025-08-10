@@ -42,28 +42,12 @@ struct config cfg = {
 	.ifindex   = -1,
 };
 
-/**
- * struct xsk_umem_info - Represents the UMEM (user memory) configuration and associated rings.
- * @fq: Fill queue ring buffer for UMEM, used to supply buffers to the kernel.
- * @cq: Completion queue ring buffer for UMEM, used to retrieve completed buffers from the kernel.
- * @umem: Pointer to the UMEM object, which manages the memory region for packet data.
- * @buffer: Pointer to the memory buffer allocated for UMEM.
- */
 struct xsk_umem_info {
 	struct xsk_ring_prod fq;
 	struct xsk_ring_cons cq;
 	struct xsk_umem *umem;
 	void *buffer;
 };
-
-/**
- * struct stats_record - Tracks statistics for packet and byte counts.
- * @timestamp: Timestamp of the last statistics update.
- * @rx_packets: Total number of packets received.
- * @rx_bytes: Total number of bytes received.
- * @tx_packets: Total number of packets transmitted.
- * @tx_bytes: Total number of bytes transmitted.
- */
 struct stats_record {
 	uint64_t timestamp;
 	uint64_t rx_packets;
@@ -71,19 +55,6 @@ struct stats_record {
 	uint64_t tx_packets;
 	uint64_t tx_bytes;
 };
-
-/**
- * struct xsk_socket_info - Represents an AF_XDP socket and its associated resources.
- * @rx: Receive ring buffer for packets received from the kernel.
- * @tx: Transmit ring buffer for packets to be sent to the kernel.
- * @umem: Pointer to the associated UMEM information structure.
- * @xsk: Pointer to the AF_XDP socket object.
- * @umem_frame_addr: Array of addresses for UMEM frames, used to track memory buffers.
- * @umem_frame_free: Counter for the number of free UMEM frames available.
- * @outstanding_tx: Counter for the number of outstanding packets in the transmit queue.
- * @stats: Current statistics for the socket, including packet and byte counts.
- * @prev_stats: Previous statistics snapshot, used for calculating deltas.
- */
 struct xsk_socket_info {
 	struct xsk_ring_cons rx;
 	struct xsk_ring_prod tx;
@@ -305,7 +276,7 @@ static inline void csum_replace2(__sum16 *sum, __be16 old, __be16 new)
 	*sum = ~csum16_add(csum16_sub(~(*sum), old), new);
 }
 
-static bool process_packet(struct xsk_socket_info *xsk,
+static bool af_xdp_process_packet(struct xsk_socket_info *xsk,
 			   uint64_t addr, uint32_t len)
 {
 	uint8_t *pkt = xsk_umem__get_data(xsk->umem->buffer, addr);
@@ -392,10 +363,12 @@ static void handle_receive_packets(struct xsk_socket_info *xsk)
 
 		/* This should not happen, but just in case */
 		while (ret != stock_frames)
-			ret = xsk_ring_prod__reserve(&xsk->umem->fq, rcvd, &idx_fq);
+			ret = xsk_ring_prod__reserve(&xsk->umem->fq, rcvd,
+						     &idx_fq);
 
 		for (i = 0; i < stock_frames; i++)
-			*xsk_ring_prod__fill_addr(&xsk->umem->fq, idx_fq++) = xsk_alloc_umem_frame(xsk);
+			*xsk_ring_prod__fill_addr(&xsk->umem->fq, idx_fq++) =
+				xsk_alloc_umem_frame(xsk);
 
 		xsk_ring_prod__submit(&xsk->umem->fq, stock_frames);
 	}
@@ -405,7 +378,7 @@ static void handle_receive_packets(struct xsk_socket_info *xsk)
 		uint64_t addr = xsk_ring_cons__rx_desc(&xsk->rx, idx_rx)->addr;
 		uint32_t len = xsk_ring_cons__rx_desc(&xsk->rx, idx_rx++)->len;
 
-		if (!process_packet(xsk, addr, len))
+		if (!af_xdp_process_packet(xsk, addr, len))
 			xsk_free_umem_frame(xsk, addr);
 
 		xsk->stats.rx_bytes += len;
@@ -438,90 +411,90 @@ static void rx_and_process(struct config *cfg,
 	}
 }
 
-#define NANOSEC_PER_SEC 1000000000 /* 10^9 */
-static uint64_t gettime(void)
-{
-	struct timespec t;
-	int res;
+// #define NANOSEC_PER_SEC 1000000000 /* 10^9 */
+// static uint64_t gettime(void)
+// {
+// 	struct timespec t;
+// 	int res;
 
-	res = clock_gettime(CLOCK_MONOTONIC, &t);
-	if (res < 0) {
-		fprintf(stderr, "Error with gettimeofday! (%i)\n", res);
-		exit(EXIT_FAIL);
-	}
-	return (uint64_t) t.tv_sec * NANOSEC_PER_SEC + t.tv_nsec;
-}
+// 	res = clock_gettime(CLOCK_MONOTONIC, &t);
+// 	if (res < 0) {
+// 		fprintf(stderr, "Error with gettimeofday! (%i)\n", res);
+// 		exit(EXIT_FAIL);
+// 	}
+// 	return (uint64_t) t.tv_sec * NANOSEC_PER_SEC + t.tv_nsec;
+// }
 
-static double calc_period(struct stats_record *r, struct stats_record *p)
-{
-	double period_ = 0;
-	__u64 period = 0;
+// static double calc_period(struct stats_record *r, struct stats_record *p)
+// {
+// 	double period_ = 0;
+// 	__u64 period = 0;
 
-	period = r->timestamp - p->timestamp;
-	if (period > 0)
-		period_ = ((double) period / NANOSEC_PER_SEC);
+// 	period = r->timestamp - p->timestamp;
+// 	if (period > 0)
+// 		period_ = ((double) period / NANOSEC_PER_SEC);
 
-	return period_;
-}
+// 	return period_;
+// }
 
-static void stats_print(struct stats_record *stats_rec,
-			struct stats_record *stats_prev)
-{
-	uint64_t packets, bytes;
-	double period;
-	double pps; /* packets per sec */
-	double bps; /* bits per sec */
+// static void stats_print(struct stats_record *stats_rec,
+// 			struct stats_record *stats_prev)
+// {
+// 	uint64_t packets, bytes;
+// 	double period;
+// 	double pps; /* packets per sec */
+// 	double bps; /* bits per sec */
 
-	char *fmt = "%-12s %'11lld pkts (%'10.0f pps)"
-		" %'11lld Kbytes (%'6.0f Mbits/s)"
-		" period:%f\n";
+// 	char *fmt = "%-12s %'11lld pkts (%'10.0f pps)"
+// 		" %'11lld Kbytes (%'6.0f Mbits/s)"
+// 		" period:%f\n";
 
-	period = calc_period(stats_rec, stats_prev);
-	if (period == 0)
-		period = 1;
+// 	period = calc_period(stats_rec, stats_prev);
+// 	if (period == 0)
+// 		period = 1;
 
-	packets = stats_rec->rx_packets - stats_prev->rx_packets;
-	pps     = packets / period;
+// 	packets = stats_rec->rx_packets - stats_prev->rx_packets;
+// 	pps     = packets / period;
 
-	bytes   = stats_rec->rx_bytes   - stats_prev->rx_bytes;
-	bps     = (bytes * 8) / period / 1000000;
+// 	bytes   = stats_rec->rx_bytes   - stats_prev->rx_bytes;
+// 	bps     = (bytes * 8) / period / 1000000;
 
-	printf(fmt, "AF_XDP RX:", stats_rec->rx_packets, pps,
-	       stats_rec->rx_bytes / 1000 , bps,
-	       period);
+// 	printf(fmt, "AF_XDP RX:", stats_rec->rx_packets, pps,
+// 	       stats_rec->rx_bytes / 1000 , bps,
+// 	       period);
 
-	packets = stats_rec->tx_packets - stats_prev->tx_packets;
-	pps     = packets / period;
+// 	packets = stats_rec->tx_packets - stats_prev->tx_packets;
+// 	pps     = packets / period;
 
-	bytes   = stats_rec->tx_bytes   - stats_prev->tx_bytes;
-	bps     = (bytes * 8) / period / 1000000;
+// 	bytes   = stats_rec->tx_bytes   - stats_prev->tx_bytes;
+// 	bps     = (bytes * 8) / period / 1000000;
 
-	printf(fmt, "       TX:", stats_rec->tx_packets, pps,
-	       stats_rec->tx_bytes / 1000 , bps,
-	       period);
+// 	printf(fmt, "       TX:", stats_rec->tx_packets, pps,
+// 	       stats_rec->tx_bytes / 1000 , bps,
+// 	       period);
 
-	printf("\n");
-}
+// 	printf("\n");
+// }
 
-static void *stats_poll(void *arg)
-{
-	unsigned int interval = 2;
-	struct xsk_socket_info *xsk = arg;
-	static struct stats_record previous_stats = { 0 };
+// static void *stats_poll(void *arg)
+// {
+// 	unsigned int interval = 2;
+// 	struct xsk_socket_info *xsk = arg;
+// 	static struct stats_record previous_stats = { 0 };
 
-	previous_stats.timestamp = gettime();
+// 	previous_stats.timestamp = gettime();
 
-	/* Trick to pretty printf with thousands separators use %' */
-	setlocale(LC_NUMERIC, "en_US");
+// 	/* Trick to pretty printf with thousands separators use %' */
+// 	setlocale(LC_NUMERIC, "en_US");
 
-	while (!global_exit) {
-		sleep(interval);
-		xsk->stats.timestamp = gettime();
-		stats_print(&xsk->stats, &previous_stats);
-		previous_stats = xsk->stats;
-	}
-	return NULL;
-}
+// 	while (!global_exit) {
+// 		sleep(interval);
+// 		xsk->stats.timestamp = gettime();
+// 		stats_print(&xsk->stats, &previous_stats);
+// 		previous_stats = xsk->stats;
+// 	}
+// 	return NULL;
+// }
 
 static void exit_application(int signal)
 {
@@ -540,7 +513,7 @@ static void exit_application(int signal)
 
 int main(int argc, char **argv)
 {
-	int ret;
+	// int ret;
 	void *packet_buffer;
 	uint64_t packet_buffer_size;
 	DECLARE_LIBBPF_OPTS(bpf_object_open_opts, opts);
@@ -548,7 +521,7 @@ int main(int argc, char **argv)
 	struct rlimit rlim = {RLIM_INFINITY, RLIM_INFINITY};
 	struct xsk_umem_info *umem;
 	struct xsk_socket_info *xsk_socket;
-	pthread_t stats_poll_thread;
+	// pthread_t stats_poll_thread; 
 	int err;
 	char errmsg[1024];
 
@@ -653,15 +626,15 @@ int main(int argc, char **argv)
 	}
 
 	/* Start thread to do statistics display */
-	if (verbose) {
-		ret = pthread_create(&stats_poll_thread, NULL, stats_poll,
-				     xsk_socket);
-		if (ret) {
-			fprintf(stderr, "ERROR: Failed creating statistics thread "
-				"\"%s\"\n", strerror(errno));
-			exit(EXIT_FAILURE);
-		}
-	}
+	// if (verbose) {
+	// 	ret = pthread_create(&stats_poll_thread, NULL, stats_poll,
+	// 			     xsk_socket);
+	// 	if (ret) {
+	// 		fprintf(stderr, "ERROR: Failed creating statistics thread "
+	// 			"\"%s\"\n", strerror(errno));
+	// 		exit(EXIT_FAILURE);
+	// 	}
+	// }
 
 	/* Receive and count packets than drop them */
 	rx_and_process(&cfg, xsk_socket);
