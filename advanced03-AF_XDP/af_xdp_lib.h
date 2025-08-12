@@ -23,14 +23,6 @@ struct xsk_umem_info {
 	void *buffer;
 };
 
-struct stats_record {
-	uint64_t timestamp;
-	uint64_t rx_packets;
-	uint64_t rx_bytes;
-	uint64_t tx_packets;
-	uint64_t tx_bytes;
-};
-
 struct xsk_socket_info {
 	struct xsk_ring_cons rx;
 	struct xsk_ring_prod tx;
@@ -41,9 +33,6 @@ struct xsk_socket_info {
 	uint32_t umem_frame_free;
 
 	uint32_t outstanding_tx;
-
-	struct stats_record stats;
-	struct stats_record prev_stats;
 };
 
 /* Library context structure */
@@ -54,8 +43,6 @@ struct af_xdp_context {
 	struct config cfg;
 	struct xsk_umem_info *umem;
 	struct xsk_socket_info *xsk_socket;
-	pthread_t stats_poll_thread;
-	bool stats_thread_running;
 	bool global_exit;
 };
 
@@ -93,18 +80,10 @@ unsigned int af_xdp_receive(struct xsk_socket_info *xsk,
 							uint32_t *lens,
 							unsigned int max_entries);
 
-/* Statistics functions */
-void af_xdp_stats_print(struct stats_record *stats_rec,
-					   struct stats_record *stats_prev);
-void *af_xdp_stats_poll(void *arg);
-uint64_t af_xdp_gettime(void);
-double af_xdp_calc_period(struct stats_record *r, struct stats_record *p);
-
 /* Setup functions */
 int af_xdp_setup_program(struct af_xdp_context *ctx, const char *filename,
 						const char *progname);
 int af_xdp_setup_socket(struct af_xdp_context *ctx);
-int af_xdp_start_stats_thread(struct af_xdp_context *ctx);
 
 /* Utility functions */
 void af_xdp_set_global_exit(struct af_xdp_context *ctx, bool exit_flag);

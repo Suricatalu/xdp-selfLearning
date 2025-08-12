@@ -39,7 +39,6 @@ struct af_xdp_context *af_xdp_init(void)
 	ctx->cfg.ifindex = -1;
 	ctx->custom_xsk = false;
 	ctx->global_exit = false;
-	ctx->stats_thread_running = false;
 	ctx->xsk_map_fd = -1;
 	printf("AF_XDP context successfully created.\n");
 	return ctx;
@@ -52,11 +51,6 @@ void af_xdp_cleanup(struct af_xdp_context *ctx)
 		return;
 
 	ctx->global_exit = true;
-
-	if (ctx->stats_thread_running) {
-		pthread_join(ctx->stats_poll_thread, NULL);
-		ctx->stats_thread_running = false;
-	}
 
 	if (ctx->xsk_socket) {
 		xsk_socket__delete(ctx->xsk_socket->xsk);
@@ -244,8 +238,6 @@ bool af_xdp_ready_send(struct xsk_socket_info *xsk, uint64_t addr, uint32_t len)
 
 	/* Update outstanding and stats */
 	xsk->outstanding_tx++;
-	xsk->stats.tx_bytes += len;
-	xsk->stats.tx_packets++;
 	return true;
 }
 
@@ -280,110 +272,11 @@ unsigned int af_xdp_receive(struct xsk_socket_info *xsk,
 	}
 
 	xsk_ring_cons__release(&xsk->rx, rcvd);
-	xsk->stats.rx_packets += rcvd;
 
 	return rcvd;
 }
 
 
-
-/* Get current time */
-uint64_t af_xdp_gettime(void)
-{
-	struct timespec t;
-	int res;
-
-	res = clock_gettime(CLOCK_MONOTONIC, &t);
-	if (res < 0) {
-		fprintf(stderr, "Error with clock_gettime! (%i)\n", res);
-		return 0;
-	}
-	return (uint64_t) t.tv_sec * NANOSEC_PER_SEC + t.tv_nsec;
-}
-
-/* Calculate time period */
-double af_xdp_calc_period(struct stats_record *r, struct stats_record *p)
-{
-	double period_ = 0;
-	__u64 period = 0;
-
-	period = r->timestamp - p->timestamp;
-	if (period > 0)
-		period_ = ((double) period / NANOSEC_PER_SEC);
-
-	return period_;
-}
-
-/* Print statistics */
-void af_xdp_stats_print(struct stats_record *stats_rec,
-					   struct stats_record *stats_prev)
-{
-	uint64_t packets, bytes;
-	double period;
-	double pps; /* packets per sec */
-	double bps; /* bits per sec */
-
-	char *fmt = "%-12s %'11lld pkts (%'10.0f pps)"
-		" %'11lld Kbytes (%'6.0f Mbits/s)"
-		" period:%f\n";
-
-	period = af_xdp_calc_period(stats_rec, stats_prev);
-	if (period == 0)
-		period = 1;
-
-	packets = stats_rec->rx_packets - stats_prev->rx_packets;
-	pps     = packets / period;
-
-	bytes   = stats_rec->rx_bytes   - stats_prev->rx_bytes;
-	bps     = (bytes * 8) / period / 1000000;
-
-	printf(fmt, "AF_XDP RX:", stats_rec->rx_packets, pps,
-		   stats_rec->rx_bytes / 1000 , bps,
-		   period);
-
-	packets = stats_rec->tx_packets - stats_prev->tx_packets;
-	pps     = packets / period;
-
-	bytes   = stats_rec->tx_bytes   - stats_prev->tx_bytes;
-	bps     = (bytes * 8) / period / 1000000;
-
-	printf(fmt, "       TX:", stats_rec->tx_packets, pps,
-		   stats_rec->tx_bytes / 1000 , bps,
-		   period);
-
-	printf("\n");
-}
-
-/* Statistics polling thread */
-void *af_xdp_stats_poll(void *arg)
-{
-	unsigned int interval = 2;
-	struct xsk_socket_info *xsk = arg;
-	static struct stats_record previous_stats = { 0 };
-
-	previous_stats.timestamp = af_xdp_gettime();
-
-	/* Trick to pretty printf with thousands separators use %' */
-	setlocale(LC_NUMERIC, "en_US");
-
-	/* Note: This implementation assumes global_exit is accessible.
-	 * In a library context, you might want to pass this as a parameter
-	 * or use the context structure */
-	while (1) {
-		sleep(interval);
-		xsk->stats.timestamp = af_xdp_gettime();
-		af_xdp_stats_print(&xsk->stats, &previous_stats);
-		previous_stats = xsk->stats;
-		
-		/* Check for exit condition - this is a simplified implementation */
-		if (xsk->stats.rx_packets == 0 && xsk->stats.tx_packets == 0) {
-			static int zero_count = 0;
-			zero_count++;
-			if (zero_count > 10) break; /* Exit after 20 seconds of no traffic */
-		}
-	}
-	return NULL;
-}
 
 /* Setup XDP program */
 int af_xdp_setup_program(struct af_xdp_context *ctx, const char *filename,
@@ -487,23 +380,6 @@ int af_xdp_setup_socket(struct af_xdp_context *ctx)
 	}
 	printf("DEBUG: XSK socket configured successfully\n");
 
-	return 0;
-}
-
-/* Start statistics thread */
-int af_xdp_start_stats_thread(struct af_xdp_context *ctx)
-{
-	int ret;
-
-	ret = pthread_create(&ctx->stats_poll_thread, NULL, af_xdp_stats_poll,
-				 ctx->xsk_socket);
-	if (ret) {
-		fprintf(stderr, "ERROR: Failed creating statistics thread \"%s\"\n",
-			strerror(errno));
-		return -1;
-	}
-
-	ctx->stats_thread_running = true;
 	return 0;
 }
 

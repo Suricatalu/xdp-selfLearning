@@ -1,5 +1,9 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 
+#define _DEFAULT_SOURCE   // 或 #define _GNU_SOURCE
+#define _POSIX_C_SOURCE 199309L
+#include <unistd.h>
+
 #include <assert.h>
 #include <errno.h>
 #include <getopt.h>
@@ -25,6 +29,8 @@
 #include <linux/if_ether.h>
 #include <linux/ipv6.h>
 #include <linux/icmpv6.h>
+
+#include <malloc.h> // For posix_memalign
 
 #include "../common/common_params.h"
 #include "../common/common_user_bpf_xdp.h"
@@ -123,6 +129,12 @@ static const struct option_wrapper long_options[] = {
 };
 
 static bool global_exit;
+
+void print_time_diff(const char *label, struct timespec *start, struct timespec *end) {
+    long elapsed = (end->tv_nsec - start->tv_nsec);
+	if (elapsed > 80000)
+	    printf("%s: %ld nanoseconds\n", label, elapsed);
+}
 
 static struct xsk_umem_info *configure_xsk_umem(void *buffer, uint64_t size)
 {
@@ -396,6 +408,7 @@ static void rx_and_process(struct config *cfg,
 {
 	struct pollfd fds[2];
 	int ret, nfds = 1;
+	struct timespec start, end;
 
 	memset(fds, 0, sizeof(fds));
 	fds[0].fd = xsk_socket__fd(xsk_socket->xsk);
@@ -407,94 +420,12 @@ static void rx_and_process(struct config *cfg,
 			if (ret <= 0 || ret > 1)
 				continue;
 		}
+		clock_gettime(CLOCK_MONOTONIC, &start);
 		handle_receive_packets(xsk_socket);
+		clock_gettime(CLOCK_MONOTONIC, &end);
+		print_time_diff("rx_and_process", &start, &end);
 	}
 }
-
-// #define NANOSEC_PER_SEC 1000000000 /* 10^9 */
-// static uint64_t gettime(void)
-// {
-// 	struct timespec t;
-// 	int res;
-
-// 	res = clock_gettime(CLOCK_MONOTONIC, &t);
-// 	if (res < 0) {
-// 		fprintf(stderr, "Error with gettimeofday! (%i)\n", res);
-// 		exit(EXIT_FAIL);
-// 	}
-// 	return (uint64_t) t.tv_sec * NANOSEC_PER_SEC + t.tv_nsec;
-// }
-
-// static double calc_period(struct stats_record *r, struct stats_record *p)
-// {
-// 	double period_ = 0;
-// 	__u64 period = 0;
-
-// 	period = r->timestamp - p->timestamp;
-// 	if (period > 0)
-// 		period_ = ((double) period / NANOSEC_PER_SEC);
-
-// 	return period_;
-// }
-
-// static void stats_print(struct stats_record *stats_rec,
-// 			struct stats_record *stats_prev)
-// {
-// 	uint64_t packets, bytes;
-// 	double period;
-// 	double pps; /* packets per sec */
-// 	double bps; /* bits per sec */
-
-// 	char *fmt = "%-12s %'11lld pkts (%'10.0f pps)"
-// 		" %'11lld Kbytes (%'6.0f Mbits/s)"
-// 		" period:%f\n";
-
-// 	period = calc_period(stats_rec, stats_prev);
-// 	if (period == 0)
-// 		period = 1;
-
-// 	packets = stats_rec->rx_packets - stats_prev->rx_packets;
-// 	pps     = packets / period;
-
-// 	bytes   = stats_rec->rx_bytes   - stats_prev->rx_bytes;
-// 	bps     = (bytes * 8) / period / 1000000;
-
-// 	printf(fmt, "AF_XDP RX:", stats_rec->rx_packets, pps,
-// 	       stats_rec->rx_bytes / 1000 , bps,
-// 	       period);
-
-// 	packets = stats_rec->tx_packets - stats_prev->tx_packets;
-// 	pps     = packets / period;
-
-// 	bytes   = stats_rec->tx_bytes   - stats_prev->tx_bytes;
-// 	bps     = (bytes * 8) / period / 1000000;
-
-// 	printf(fmt, "       TX:", stats_rec->tx_packets, pps,
-// 	       stats_rec->tx_bytes / 1000 , bps,
-// 	       period);
-
-// 	printf("\n");
-// }
-
-// static void *stats_poll(void *arg)
-// {
-// 	unsigned int interval = 2;
-// 	struct xsk_socket_info *xsk = arg;
-// 	static struct stats_record previous_stats = { 0 };
-
-// 	previous_stats.timestamp = gettime();
-
-// 	/* Trick to pretty printf with thousands separators use %' */
-// 	setlocale(LC_NUMERIC, "en_US");
-
-// 	while (!global_exit) {
-// 		sleep(interval);
-// 		xsk->stats.timestamp = gettime();
-// 		stats_print(&xsk->stats, &previous_stats);
-// 		previous_stats = xsk->stats;
-// 	}
-// 	return NULL;
-// }
 
 static void exit_application(int signal)
 {
@@ -624,17 +555,6 @@ int main(int argc, char **argv)
 			strerror(errno));
 		exit(EXIT_FAILURE);
 	}
-
-	/* Start thread to do statistics display */
-	// if (verbose) {
-	// 	ret = pthread_create(&stats_poll_thread, NULL, stats_poll,
-	// 			     xsk_socket);
-	// 	if (ret) {
-	// 		fprintf(stderr, "ERROR: Failed creating statistics thread "
-	// 			"\"%s\"\n", strerror(errno));
-	// 		exit(EXIT_FAILURE);
-	// 	}
-	// }
 
 	/* Receive and count packets than drop them */
 	rx_and_process(&cfg, xsk_socket);
